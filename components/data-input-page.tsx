@@ -127,7 +127,7 @@ export function DataInputPage() {
     try {
       const dataToSend = csvData.length > 0 ? csvData : sampleData
 
-      const response = await fetch("https://cypher-hackathon-beta.vercel.app/predict", {
+      const response = await fetch("https://cypher-hackathon.onrender.com/predict", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data: dataToSend }),
