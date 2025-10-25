@@ -1,6 +1,5 @@
 "use client"
 
-import type React from "react"
 import { useState } from "react"
 import {
   Card,
@@ -30,136 +29,164 @@ import {
   ScatterChart,
   Scatter,
 } from "recharts"
-import { Upload, TrendingUp, Database, Network } from "lucide-react"
+import { Upload, TrendingUp, Network, Database } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 const PARAMETERS = [
-  "WindSpeed",
-  "StdDevWindSpeed",
-  "WindDirAbs",
-  "WindDirRel",
-  "Power",
-  "MaxPower",
-  "MinPower",
-  "StdDevPower",
-  "AvgRPow",
-  "Pitch",
-  "GenRPM",
-  "RotorRPM",
-  "EnvirTemp",
-  "NacelTemp",
-  "GearOilTemp",
-  "GearBearTemp",
-  "GenTemp",
-  "GenPh1Temp",
-  "GenPh2Temp",
-  "GenPh3Temp",
-  "GenBearTemp",
-  "Timestamp",
+  "timestamp",
+  "wind_speed",
+  "pitch",
+  "rpm",
+  "yaw",
+  "temperature",
+  "nacelle_temp",
+  "gear_oil_temp",
+  "generator_temp",
 ]
 
-const generateSampleData = () => {
-  return Array.from({ length: 24 }, (_, i) => ({
-    time: `${i}:00`,
-    WindSpeed: Math.random() * 15 + 5,
-    Power: Math.random() * 2500 + 500,
-    GenTemp: Math.random() * 40 + 20,
-    RotorRPM: Math.random() * 15 + 5,
-    Pitch: Math.random() * 90,
-    EnvirTemp: Math.random() * 25 + 5,
-  }))
-}
-
-export function DataInputPage() {
+export default function DataInputPage() {
   const [csvData, setCsvData] = useState<any[]>([])
-  const [selectedXAxis, setSelectedXAxis] = useState<string>("WindSpeed")
-  const [selectedYAxis, setSelectedYAxis] = useState<string>("Power")
+  const [selectedXAxis, setSelectedXAxis] = useState<string>("wind_speed")
+  const [selectedYAxis, setSelectedYAxis] = useState<string>("rpm")
   const [selectedChartType, setSelectedChartType] = useState<string>("line")
-  const [sampleData] = useState(generateSampleData())
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [apiResponse, setApiResponse] = useState<any>(null)
 
-  // === CSV Upload Handler ===
-  const handleCSVUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const text = e.target?.result as string
-      const lines = text.split("\n")
-      const headers = lines[0].split(",")
-      const data = lines.slice(1).map((line) => {
-        const values = line.split(",")
-        const obj: any = {}
-        headers.forEach((header, index) => {
-          obj[header.trim()] = isNaN(Number(values[index])) ? values[index] : Number(values[index])
-        })
-        return obj
-      })
-      setCsvData(data.filter((d) => Object.keys(d).length > 0))
-    }
-    reader.readAsText(file)
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null
+    setSelectedFile(file)
+    
+    // Reset previous state when new file selected
+    setCsvData([])
+    setApiResponse(null)
   }
 
-  // === Load Hugging Face Dataset ===
+  // 🆕 Load Hugging Face Dataset
   const fetchHFData = async () => {
     setIsLoading(true)
+    setCsvData([])
+    setApiResponse(null)
+    setSelectedFile(null)
+
     try {
       const res = await fetch(
         "https://datasets-server.huggingface.co/rows?dataset=vossmoos%2Fvestasv52-scada-windturbine-granada&config=default&split=train&offset=0&length=100"
       )
+      
+      if (!res.ok) throw new Error(`Failed to fetch HF dataset: ${res.status}`)
+      
       const json = await res.json()
       const hfRows = json.rows.map((r: any) => r.row)
-      setCsvData(hfRows)
+      
+      // Transform HF data to match your parameter names
+      const transformedData = hfRows.map((row: any) => ({
+        timestamp: row.Timestamp || new Date().toISOString(),
+        wind_speed: row.WindSpeed || 0,
+        pitch: row.Pitch || 0,
+        rpm: row.RotorRPM || 0,
+        yaw: row.WindDirRel || 0,
+        temperature: row.EnvirTemp || 0,
+        nacelle_temp: row.NacelTemp || 0,
+        gear_oil_temp: row.GearOilTemp || 0,
+        generator_temp: row.GenTemp || 0,
+      }))
+      
+      setCsvData(transformedData)
+      console.log('✅ HF Dataset loaded:', transformedData.length, 'records')
     } catch (error) {
-      console.error("Error loading HF dataset:", error)
+      console.error("❌ Error loading HF dataset:", error)
+      setApiResponse({ error: "Failed to load Hugging Face dataset" })
     } finally {
       setIsLoading(false)
     }
   }
 
-  // === Call Prediction API ===
-  const handlePredict = async () => {
-    setIsLoading(true)
+  const handleUpload = async () => {
+    if (!selectedFile) return alert("Please select a CSV file first")
+
+    // 🧹 Clear previous state
+    setCsvData([])
     setApiResponse(null)
+    setIsLoading(true)
+
+    const formData = new FormData()
+    formData.append("file", selectedFile)
+
+    // 🕒 Add timeout
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 30000)
 
     try {
-      const dataToSend = csvData.length > 0 ? csvData : sampleData
-
       const response = await fetch("https://cypher-hackathon.onrender.com/predict", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data: dataToSend }),
+        body: formData,
+        signal: controller.signal,
       })
 
-      if (!response.ok) throw new Error(`HTTP error: ${response.status}`)
-
-      const result = await response.json()
-
-      // Merge predictions if API returns array of results
-      if (result.predictions && Array.isArray(result.predictions)) {
-        const merged = dataToSend.map((row, i) => ({
-          ...row,
-          Prediction: result.predictions[i]?.Power_Predicted ?? result.predictions[i],
-        }))
-        setCsvData(merged)
+      clearTimeout(timeoutId)
+      
+      const data = await response.json()
+      console.log('📥 API Response:', data)
+      
+      if (!response.ok) {
+        throw new Error(data.detail || data.error || `Server error: ${response.status}`)
       }
 
-      setApiResponse(result)
-    } catch (error) {
-      console.error("Prediction error:", error)
-      setApiResponse({ error: "Failed to fetch prediction." })
+      // 🧼 CLEAN THE DATA: remove 'environment' everywhere
+      if (Array.isArray(data.results)) {
+        const cleanedResults = data.results.map((item: any) => {
+          const { environment, ...rest } = item
+          return {
+            ...rest,
+            telemetry: {
+              ...Object.fromEntries(
+                Object.entries(item.telemetry || {}).filter(
+                  ([key]) => key !== "environment"
+                )
+              ),
+            },
+          }
+        })
+        setApiResponse({ ...data, results: cleanedResults })
+
+        const flattened = cleanedResults.map((item: any) => ({
+          timestamp: item.timestamp,
+          ...item.telemetry,
+        }))
+        setCsvData(flattened)
+      } else if (Array.isArray(data.predictions)) {
+        setCsvData(data.predictions)
+        setApiResponse(data)
+      }
+    } catch (err: any) {
+      console.error('❌ Upload failed:', err)
+      if (err.name === 'AbortError') {
+        setApiResponse({ error: 'Request timeout - server took too long to respond' })
+      } else {
+        setApiResponse({ error: err.message })
+      }
+      alert(`Upload failed: ${err.message}`)
     } finally {
+      clearTimeout(timeoutId)
       setIsLoading(false)
+      
+      // Reset file input
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+      if (fileInput) fileInput.value = ''
     }
   }
 
-  // === Render Chart ===
   const renderChart = () => {
-    const data = csvData.length > 0 ? csvData : sampleData
+    if (csvData.length === 0)
+      return (
+        <div className="text-center text-muted-foreground py-10">
+          Upload a CSV file or load HF dataset to visualize data.
+        </div>
+      )
+
     const chartProps = {
-      data,
+      data: csvData,
       margin: { top: 5, right: 30, left: 0, bottom: 5 },
     }
 
@@ -173,7 +200,7 @@ export function DataInputPage() {
               <YAxis />
               <Tooltip />
               <Legend />
-              <Bar dataKey={selectedYAxis} fill="#0ea5e9" />
+              <Bar dataKey={selectedYAxis} fill="#0ea5e9" radius={6} />
             </BarChart>
           </ResponsiveContainer>
         )
@@ -199,76 +226,102 @@ export function DataInputPage() {
               <YAxis />
               <Tooltip />
               <Legend />
-              <Line type="monotone" dataKey={selectedYAxis} stroke="#0ea5e9" dot={false} />
+              <Line
+                type="monotone"
+                dataKey={selectedYAxis}
+                stroke="#0ea5e9"
+                dot={false}
+                strokeWidth={2}
+              />
             </LineChart>
           </ResponsiveContainer>
         )
     }
   }
 
-  // === JSX ===
   return (
-    <div className="flex-1 space-y-6 p-8">
+    <div className="flex-1 space-y-8 p-8 bg-gradient-to-br from-slate-50 to-slate-100 min-h-screen">
       {/* Header */}
       <div className="space-y-2">
-        <h1 className="text-4xl font-bold tracking-tight">Data Analysis</h1>
+        <h1 className="text-4xl font-extrabold tracking-tight text-slate-800">
+          Data Analysis & Prediction
+        </h1>
         <p className="text-muted-foreground">
-          Upload CSV, load Hugging Face turbine data, visualize parameters, and send data to prediction API
+          Upload a CSV file, load HF turbine data, or visualize and get ML-based optimization results.
         </p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* CSV Upload & Controls */}
-        <Card className="lg:col-span-1 border-2 border-dashed hover:border-primary transition-colors">
+        {/* CSV Upload */}
+        <Card className="lg:col-span-1 shadow-lg border border-slate-200 backdrop-blur-sm bg-white/60">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Upload className="w-5 h-5" />
-              Data Input
+            <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+              <Upload className="w-5 h-5 text-primary" /> Data Input
             </CardTitle>
-            <CardDescription>Upload or fetch sample turbine data</CardDescription>
+            <CardDescription>Upload CSV or load sample turbine data</CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <input
-                type="file"
-                accept=".csv"
-                onChange={handleCSVUpload}
-                className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
-              />
-              <Button onClick={fetchHFData} disabled={isLoading} className="w-full flex items-center gap-2">
-                <Database className="w-4 h-4" /> {isLoading ? "Loading..." : "Load HF Dataset"}
-              </Button>
-              <Button onClick={handlePredict} disabled={isLoading} className="w-full flex items-center gap-2">
-                <Network className="w-4 h-4" /> {isLoading ? "Predicting..." : "Run Prediction"}
-              </Button>
-
-              {csvData.length > 0 && (
-                <p className="text-sm text-green-600 font-medium">✓ {csvData.length} records loaded</p>
-              )}
+          <CardContent className="space-y-4">
+            <input
+              type="file"
+              accept=".csv"
+              onChange={handleFileChange}
+              className="w-full text-sm"
+            />
+            <Button
+              onClick={handleUpload}
+              disabled={!selectedFile || isLoading}
+              className="w-full flex items-center gap-2 font-medium"
+            >
+              <Network className="w-4 h-4" />
+              {isLoading ? "Uploading..." : "Upload & Predict"}
+            </Button>
+            
+            {/* 🆕 HF Dataset Button */}
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-white/60 px-2 text-muted-foreground">Or</span>
+              </div>
             </div>
+            
+            <Button
+              onClick={fetchHFData}
+              disabled={isLoading}
+              variant="outline"
+              className="w-full flex items-center gap-2 font-medium"
+            >
+              <Database className="w-4 h-4" />
+              {isLoading ? "Loading..." : "Load HF Dataset"}
+            </Button>
+            
+            {csvData.length > 0 && (
+              <p className="text-sm text-green-600 font-medium">
+                ✓ {csvData.length} records loaded
+              </p>
+            )}
           </CardContent>
         </Card>
 
-        {/* Parameter Selection */}
-        <Card className="lg:col-span-2">
+        {/* Visualization Settings */}
+        <Card className="lg:col-span-2 shadow-lg border border-slate-200 backdrop-blur-sm bg-white/60">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="w-5 h-5" />
-              Visualization Settings
+            <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+              <TrendingUp className="w-5 h-5 text-primary" /> Visualization Settings
             </CardTitle>
-            <CardDescription>Select parameters and chart type</CardDescription>
+            <CardDescription>Select chart parameters and type</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid gap-4 md:grid-cols-3">
-              {/* X-Axis */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium">X-Axis Parameter</label>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">X-Axis</label>
                 <Select value={selectedXAxis} onValueChange={setSelectedXAxis}>
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue placeholder="Select X-axis" />
                   </SelectTrigger>
                   <SelectContent>
-                    {[...PARAMETERS, "Prediction"].map((param) => (
+                    {PARAMETERS.map((param) => (
                       <SelectItem key={param} value={param}>
                         {param}
                       </SelectItem>
@@ -276,16 +329,14 @@ export function DataInputPage() {
                   </SelectContent>
                 </Select>
               </div>
-
-              {/* Y-Axis */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Y-Axis Parameter</label>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Y-Axis</label>
                 <Select value={selectedYAxis} onValueChange={setSelectedYAxis}>
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue placeholder="Select Y-axis" />
                   </SelectTrigger>
                   <SelectContent>
-                    {[...PARAMETERS, "Prediction"].map((param) => (
+                    {PARAMETERS.map((param) => (
                       <SelectItem key={param} value={param}>
                         {param}
                       </SelectItem>
@@ -293,18 +344,19 @@ export function DataInputPage() {
                   </SelectContent>
                 </Select>
               </div>
-
-              {/* Chart Type */}
-              <div className="space-y-2">
+              <div className="space-y-1">
                 <label className="text-sm font-medium">Chart Type</label>
-                <Select value={selectedChartType} onValueChange={setSelectedChartType}>
+                <Select
+                  value={selectedChartType}
+                  onValueChange={setSelectedChartType}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="line">Line Chart</SelectItem>
-                    <SelectItem value="bar">Bar Chart</SelectItem>
-                    <SelectItem value="scatter">Scatter Plot</SelectItem>
+                    <SelectItem value="line">Line</SelectItem>
+                    <SelectItem value="bar">Bar</SelectItem>
+                    <SelectItem value="scatter">Scatter</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -313,62 +365,75 @@ export function DataInputPage() {
         </Card>
       </div>
 
-      {/* Visualization */}
-      <Card>
+      {/* Chart */}
+      <Card className="shadow-lg border border-slate-200 backdrop-blur-sm bg-white/60">
         <CardHeader>
           <CardTitle>Data Visualization</CardTitle>
-          <CardDescription>{csvData.length > 0 ? "Showing current dataset" : "Showing sample data"}</CardDescription>
+          <CardDescription>
+            {csvData.length > 0
+              ? "Uploaded dataset visualization"
+              : "Upload a CSV file or load HF dataset to view data"}
+          </CardDescription>
         </CardHeader>
         <CardContent>{renderChart()}</CardContent>
       </Card>
 
-      {/* API Response */}
-      {apiResponse && (
-        <Card>
+      {/* Error Display */}
+      {apiResponse?.error && (
+        <Card className="border-red-200 bg-red-50 shadow-lg">
           <CardHeader>
-            <CardTitle>Prediction Results</CardTitle>
-            <CardDescription>Response from the API</CardDescription>
+            <CardTitle className="text-red-700 flex items-center gap-2">
+              ⚠️ Error
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <pre className="bg-muted p-4 rounded-md text-sm overflow-auto">
-              {JSON.stringify(apiResponse, null, 2)}
-            </pre>
+            <p className="text-red-600 text-sm">{apiResponse.error}</p>
+            <p className="text-xs text-muted-foreground mt-2">
+              Check console for more details or try a different file.
+            </p>
           </CardContent>
         </Card>
       )}
 
-      {/* Data Preview */}
-      {csvData.length > 0 && (
-        <Card>
+      {/* Results (Environment Removed) */}
+      {apiResponse?.results && !apiResponse.error && (
+        <Card className="shadow-lg border border-slate-200 backdrop-blur-sm bg-white/60">
           <CardHeader>
-            <CardTitle>Data Preview</CardTitle>
-            <CardDescription>First 10 records</CardDescription>
+            <CardTitle>Optimization Results</CardTitle>
+            <CardDescription>AI-generated turbine telemetry predictions</CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b">
-                    {Object.keys(csvData[0]).map((key) => (
-                      <th key={key} className="text-left py-2 px-4 font-semibold">
-                        {key}
-                      </th>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            {apiResponse.results.map((r: any, i: number) => (
+              <div
+                key={i}
+                className="rounded-xl border p-4 bg-white/80 hover:shadow-md transition-all"
+              >
+                <p className="font-semibold text-slate-800">
+                  Timestamp: {r.timestamp}
+                </p>
+                {r.summary && (
+                  <p className="italic text-sm text-muted-foreground mb-2">
+                    {r.summary}
+                  </p>
+                )}
+                {r.telemetry &&
+                  Object.entries(r.telemetry)
+                    .filter(([key]) => key !== "environment")
+                    .map(([key, val]) => (
+                      <div
+                        key={key}
+                        className="flex justify-between text-sm border-b border-slate-100 py-1"
+                      >
+                        <span className="text-slate-500">
+                          {key.replaceAll("_", " ")}
+                        </span>
+                        <span className="text-slate-800 font-medium">
+                          {String(val)}
+                        </span>
+                      </div>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {csvData.slice(0, 10).map((row, idx) => (
-                    <tr key={idx} className="border-b hover:bg-muted/50">
-                      {Object.values(row).map((val, i) => (
-                        <td key={i} className="py-2 px-4">
-                          {String(val).substring(0, 20)}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+              </div>
+            ))}
           </CardContent>
         </Card>
       )}
