@@ -41,7 +41,7 @@ const randomPitch = () => Math.random() * 25 // 0-25 degrees
 const randomRpm = () => Math.random() * 20 + 5 // 5-25 RPM
 const randomYaw = () => Math.random() * 360 // 0-360 degrees
 
-export default function DataInputPage() {
+export function DataInputPage() {
   const [csvData, setCsvData] = useState<any[]>([])
   const [selectedXAxis, setSelectedXAxis] = useState<string>("index")
   const [selectedYAxis, setSelectedYAxis] = useState<string>("")
