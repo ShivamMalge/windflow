@@ -8,7 +8,7 @@ import { Maintenance } from "@/components/maintenance"
 import { Performance } from "@/components/performance"
 import { Settings } from "@/components/settings"
 import { Footer } from "@/components/footer"
-import { DataInputPage } from "@/components/data-input-page"
+import  DataInputPage  from "@/components/data-input-page"
 import { generateMockData } from "@/lib/mock-data"
 
 interface MockData {
